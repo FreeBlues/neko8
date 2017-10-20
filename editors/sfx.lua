@@ -1,10 +1,12 @@
 local UiManager = require "ui.manager"
 local UiLabelButton = require "ui.label_button"
+local UiCounter = require "ui.counter"
 local UiButton = require "ui.button"
 local UiComponent = require "ui.component"
 
 local sfx = {}
-local keyToNoteMap = {
+
+keyToNoteMap = {
 	[ "z" ] = "c ",
 	[ "x" ] = "d ",
 	[ "c" ] = "e ",
@@ -57,38 +59,65 @@ function sfx.init()
 	sfx.ui1 = UiManager()
 
 	sfx.ui1:add(
-		UiLabelButton(
-			string.format("%02d", sfx.sfx), 17,
-			8, 9, 7, config.editors.sfx.fg
-		):onClick(function(self, b, rb)
-			local v = rb and -1 or 1
+		UiCounter(
+			sfx.sfx, 27, 8, 9, 7,
+			function(self)
+				local v = -1
 
-			if api.key("lshift") or api.key("rshift") then
-				v = v * 4
+				if api.key("lshift") or api.key("rshift") then
+					v = v * 4
+				end
+
+				sfx.sfx = api.mid(0, 63, sfx.sfx + v)
+				self.v = sfx.sfx
+				sfx.updateUIValues()
+				sfx.forceDraw = true
+			end,
+			function(self)
+				local v = 1
+
+				if api.key("lshift") or api.key("rshift") then
+					v = v * 4
+				end
+
+				sfx.sfx = api.mid(0, 63, sfx.sfx + v)
+				self.v = sfx.sfx
+				sfx.updateUIValues()
+				sfx.forceDraw = true
 			end
-
-			sfx.sfx = api.mid(0, 63, sfx.sfx + v)
-			b.label = string.format("%02d", sfx.sfx)
-			sfx.forceDraw = true
-
-			-- todo: update other ui
+		):bind("updateValue", function(self)
+			self.v = sfx.sfx
 		end), "sfx"
 	)
 
 	sfx.ui1:add(
-		UiLabelButton(
-			"16", 42,
-			8, 9, 7, config.editors.sfx.fg
-		):onClick(function(b, rb)
-			local v = rb and -1 or 1
+		UiCounter(
+			16, 79,
+			8, 9, 7,
+			function(self)
+				local v = -1
 
-			if api.key("lshift") or api.key("rshift") then
-				v = v * 4
+				if api.key("lshift") or api.key("rshift") then
+					v = v * 4
+				end
+
+				neko.loadedCart.sfx[sfx.sfx].speed = api.mid(1, 63, neko.loadedCart.sfx[sfx.sfx].speed + v)
+				self.v =  neko.loadedCart.sfx[sfx.sfx].speed
+				sfx.forceDraw = true
+			end,
+			function(self)
+				local v = 1
+
+				if api.key("lshift") or api.key("rshift") then
+					v = v * 4
+				end
+
+				neko.loadedCart.sfx[sfx.sfx].speed = api.mid(1, 63, neko.loadedCart.sfx[sfx.sfx].speed + v)
+				self.v = neko.loadedCart.sfx[sfx.sfx].speed
+				sfx.forceDraw = true
 			end
-
-			neko.loadedCart.sfx[sfx.sfx].speed = api.mid(1, 63, neko.loadedCart.sfx[sfx.sfx].speed + v)
-			b.label = string.format("%02d", neko.loadedCart.sfx[sfx.sfx].speed)
-			sfx.forceDraw = true
+		):bind("updateValue", function(self)
+			self.v = neko.loadedCart.sfx[sfx.sfx].speed
 		end), "speed"
 	)
 
@@ -148,6 +177,8 @@ function sfx.init()
 			)
 		end
 	end
+
+	sfx.ui2 = UiManager()
 end
 
 function sfx.setMode(mode)
@@ -204,7 +235,7 @@ function sfx.redraw()
 
 		local c = config.editors.sfx.fg
 		api.print("SFX", 1, 9, c)
-		api.print("SPD", 27, 9, c)
+		api.print("SPD", 53, 9, c)
 
 		for i = 0, 31 do
 			local s = sfx.data[sfx.sfx][i]
@@ -212,7 +243,8 @@ function sfx.redraw()
 			local y = 17 + i % 8 * 6
 			local isEmpty = s[3] == 0
 
-			if audio.sfx[1].sfx ~= nil then
+			if audio.sfx[1].sfx == sfx.sfx and
+				audio.sfx[1].sfx ~= nil then
 				if api.flr(audio.sfx[1].offset) == i then
 					api.brectfill(
 						x - 1, y - 1, 25, 7, 9
@@ -297,7 +329,18 @@ function sfx._keydown(k)
 			end
 			sfx.forceDraw = true
 		elseif k == "space" then
-			api.sfx(sfx.sfx, 1)
+			if audio.sfx[0].sfx ~= nil or
+				audio.sfx[1].sfx ~= nil or
+				audio.sfx[2].sfx ~= nil or
+				audio.sfx[3].sfx ~= nil then
+
+				api.sfx(-1, 0)
+				api.sfx(-1, 1)
+				api.sfx(-1, 2)
+				api.sfx(-1, 3)
+			else
+				api.sfx(sfx.sfx, 1)
+			end
 		elseif k == "backspace" then
 			sfx.data[sfx.sfx][sfx.cursor.y][3] = 0
 			sfx.forceDraw = true
@@ -351,6 +394,24 @@ end
 
 function sfx.import(data)
 	sfx.data = data
+end
+
+function sfx.postImport()
+	sfx.updateUIValues()
+end
+
+function sfx.updateUIValues()
+	for _, c in pairs(sfx.ui1.indexed) do
+		if c.updateValue then
+			c:updateValue()
+		end
+	end
+
+	for _, c in pairs(sfx.ui2.indexed) do
+		if c.updateValue then
+			c:updateValue()
+		end
+	end
 end
 
 function sfx.export()
@@ -410,5 +471,3 @@ function sfx.export()
 end
 
 return sfx
-
--- vim: noet

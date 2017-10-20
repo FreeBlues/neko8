@@ -5,24 +5,26 @@
 local neko = {}
 
 function neko.init()
+	initPalette()
+
 	neko.core = nil
 	neko.fullscreen = false
 	neko.focus = true
 	neko.currentDirectory = "/"
 
 	neko.cursor = {
-		pointer = 5,
-		hand = 21,
-		holding_hand = 22 -- todo: draw it
+		default = 5,
+		pointer = 21,
+		pointer_down = 37,
+		hand = 38 -- todo: draw it
 	}
 
-	neko.cursor.current = neko.cursor.pointer
+	neko.cursor.current = neko.cursor.default
 
 	audio.init()
 
 	initCanvas()
 	initFont()
-	initPalette()
 	initApi()
 
 	if not isVisible("neko.n8", "/") then
@@ -33,6 +35,8 @@ function neko.init()
 			love.filesystem.read("neko.n8")
 		)
 	end
+
+	gamepad = require "gamepad"
 
 	editors = require "editors"
 	editors.init()
@@ -75,13 +79,23 @@ function neko.update(dt)
 		end
 	end
 
+	if g and neko.cart ~= nil and neko.cart ~= neko.core then
+		if g.b[1].ispressed then
+			api.exit()
+		end
+		g:update()  --gamepad
+	end
+
 	triggerCallback("_update")
 end
 
 function neko.draw()
 	triggerCallback("_draw")
+	if mobile and g and neko.cart ~= nil and neko.cart ~= neko.core then
+			coresprites=true g:draw() coresprites=false --gamepad
+	end
 end
 
 return neko
 
--- vim: noet
+

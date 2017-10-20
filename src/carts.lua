@@ -4,6 +4,10 @@
 
 local carts = {}
 
+require "libs.terran-basic.TBASEXEC"
+require "libs.moonscript.moonscript"
+moonscript = require "libs.moonscript.moonscript.base"
+
 function carts.load(name)
 	local cart = {}
 
@@ -19,10 +23,9 @@ function carts.load(name)
 
 	for i = 1, #extensions do
 		local n = resolveFile(pureName .. extensions[i], neko.currentDirectory)
+		local v = n:sub(1, 10) == "/programs/"
 
-		if love.filesystem.isFile(n)
-			and isVisible(n, "/") then
-
+		if love.filesystem.isFile(n) and (v or isVisible(n, "/")) then
 			found = true
 			name = n
 			break
@@ -30,7 +33,7 @@ function carts.load(name)
 	end
 
 	if not found then
-		log.error("failed to load cart")
+		log.error("failed to load cart " .. name)
 		if neko.core == nil then
 			error("Failed to load neko.n8. Did you delete it, hacker?")
 		end
@@ -47,13 +50,11 @@ function carts.load(name)
 		return cart
 	end
 
-	if OS == "Windows" then -- FIXES CRLF file endings
-		data = data:gsub("\r\n", "\n")
-		data = data:gsub("\r", "\n")
-	end
+	-- FIXES CRLF file endings
+	data = data:gsub("\r\n", "\n")
+	data = data:gsub("\r", "\n")
 
-	-- local loadData = neko.core
-	local loadData = true
+	local loadData = cart.pureName:sub(1, 10) ~= "/programs/"
 	local header = "neko8 cart"
 
 	if not data:find(header) then
@@ -97,8 +98,8 @@ function carts.load(name)
 		return cart
 	end
 
-	if loadData then
-		carts.import(cart)
+	if cart.lang == "basic" then
+		cart.sandbox._TBASIC = _TBASIC
 	end
 
 	love.graphics.setShader(
@@ -108,7 +109,14 @@ function carts.load(name)
 	setCamera()
 	setClip()
 
-	neko.loadedCart = cart
+
+	if loadData then
+		log.debug("loading data")
+		editors.openEditor(1)
+
+		neko.loadedCart = cart
+		carts.import(cart)
+	end
 
 	return cart
 end
@@ -119,21 +127,27 @@ function carts.import(cart)
 	editors.map.import(cart.map)
 	editors.sfx.import(cart.sfx)
 	editors.music.import(cart.music)
+
+	for _, m in pairs(editors.modes) do
+		if m.postImport then
+			m.postImport()
+		end
+	end
 end
 
 function carts.export()
 	neko.loadedCart.code = editors.code.export()
-	neko.loadedCart.sprites = editors.sprites.data
-	neko.loadedCart.sfx = editors.sfx.data
-	neko.loadedCart.music = editors.music.data
 end
 
 function carts.create(lang)
 	audio.currentMusic = nil
 
 	local cart = {}
+	cart.name = "new"
+	cart.pureName = "new"
 	cart.sandbox = createSandbox()
 	cart.lang = lang or "lua"
+
 	if cart.lang == "lua" then
 		cart.code = [[
 -- cart name
@@ -153,6 +167,9 @@ end
 ]]
 	elseif cart.lang == "asm" then
 		cart.code = [[
+-- cart name
+-- by @author
+
 section .data
 
 section .text
@@ -176,6 +193,31 @@ end
 mov [_init], [init]
 mov [_update], [update]
 mov [_draw], [draw]
+]]
+	elseif cart.lang == "basic" then
+		cart.sandbox._TBASIC = _TBASIC
+		-- todo: comments ??
+		cart.code = [[
+01 REM CART NAME
+02 REM BY @AUTHOR
+10 T=0
+20 PRINTH("HELLO, WORLD")
+30 PRINT("HELLO WORLD ",T)
+40 T+=1
+50 IF T<10 THEN GOTO 20
+60 END
+
+]]
+	elseif cart.lang == "moonscript" then
+		cart.code = [[
+-- cart name
+-- by @author
+
+export _init=->
+
+export _update=->
+
+export _draw=->
 ]]
 	end
 
@@ -222,7 +264,7 @@ mov [_draw], [draw]
 		}
 
 		for j = 0, 31 do
-			cart.sfx[i][j] = { 0, 0, 0, 0}
+			cart.sfx[i][j] = { 0, 0, 0, 0 }
 		end
 	end
 
@@ -231,10 +273,10 @@ mov [_draw], [draw]
 	for i = 0, 63 do
 		cart.music[i] = {
 			loop = 0,
-			[0] = 1,
-			[1] = 2,
-			[2] = 3,
-			[3] = 4
+			[0] = 0,
+			[1] = 1,
+			[2] = 2,
+			[3] = 3
 		}
 	end
 
@@ -242,7 +284,7 @@ mov [_draw], [draw]
 end
 
 function carts.loadCode(data, cart)
-	local codeTypes = { "lua", "asm" }
+	local codeTypes = { "lua", "asm", "basic", "moonscript" }
 
 	local codeType
 	local codeStart
@@ -260,7 +302,7 @@ function carts.loadCode(data, cart)
 		return
 	end
 
-	local codeEnd = data:find("\n__gfx__\n")
+	local codeEnd = data:find("\n__gfx__\n") or data:find("__end__") - 1
 
 	local code = data:sub(
 		codeStart + 1, codeEnd
@@ -279,6 +321,34 @@ function carts.loadSprites(cdata, cart)
 
 	local _, gfxStart = cdata:find("\n__gfx__\n")
 	local gfxEnd = cdata:find("\n__gff__\n")
+
+	if not gfxStart or not gfxEnd then
+		sprites.data = love.image.newImageData(128, 256)
+		sprites.sheet = love.graphics.newImage(sprites.data)
+		sprites.quads = {}
+
+		local sprite = 0
+
+		for y = 0, 31 do
+			for x = 0, 15 do
+				sprites.quads[sprite] =
+					love.graphics.newQuad(
+						8 * x, 8 * y, 8, 8, 128, 256
+					)
+
+				sprite = sprite + 1
+			end
+		end
+
+		sprites.flags = {}
+
+		for i = 0, 511 do
+			sprites.flags[i] = 0
+		end
+
+		log.info("old file")
+		return sprites -- old versions
+	end
 
 	local data = cdata:sub(gfxStart, gfxEnd)
 
@@ -374,16 +444,7 @@ function carts.loadSprites(cdata, cart)
 end
 
 function carts.loadMap(data, cart)
-
 	local map = {}
-	local _, mapStart = data:find("\n__map__\n")
-	local mapEnd = data:find("\n__sfx__\n")
-
-	if not mapEnd then -- older versions
-		mapEnd = data:find("\n__end__\n") or #data - 1
-	end
-
-	data = data:sub(mapStart, mapEnd)
 
 	for y = 0, 127 do
 		map[y] = {}
@@ -391,6 +452,21 @@ function carts.loadMap(data, cart)
 			map[y][x] = 0
 		end
 	end
+
+	local _, mapStart = data:find("\n__map__\n")
+	local mapEnd = data:find("\n__sfx__\n")
+
+	if not mapStart then
+		log.info("old file")
+		return map -- old versions
+	end
+
+	if not mapEnd then -- older versions
+		mapEnd = data:find("\n__end__\n") or #data - 1
+	end
+
+	data = data:sub(mapStart, mapEnd)
+
 
 	local row = 0
 	local col = 0
@@ -428,7 +504,6 @@ function carts.loadMap(data, cart)
 end
 
 function carts.loadSFX(data, cart)
-
 	local sfx = {}
 
 	for i = 0, 63 do
@@ -497,7 +572,6 @@ function carts.loadSFX(data, cart)
 end
 
 function carts.loadMusic(data, cart)
-
 	local music = {}
 
 	for i = 0, 63 do
@@ -593,7 +667,11 @@ function carts.patchLua(code)
 	return code
 end
 
-function carts.run(cart)
+function carts.run(cart, ...)
+	if not cart then
+		cart = neko.loadedCart
+	end
+
 	if not cart or not cart.sandbox then
 		return
 	end
@@ -602,19 +680,26 @@ function carts.run(cart)
 
 	local name = cart.name
 
-	if not name then
-		name = "new cart"
-	end
-
-	if cart ~= neko.core then
-		carts.save(cart.pureName)
+	if not cart.pureName or
+		cart ~= neko.core and cart.pureName:sub(1, 10) ~= "/programs/" then
+		-- carts.save(cart.pureName)
+		carts.export()
 	end
 
 	log.info(string.format("running cart %s", name))
 
 	local code
+	local ok, f, e
+
 	if cart.lang == "lua" then
 		code = cart.code
+
+		ok, f, e = pcall(
+			load, carts.patchLua(code), name
+		)
+
+		g = gamepad:new()
+
 	elseif cart.lang == "asm" then
 		local std = {}
 		local asm_std = require "asm-lua.include.std"
@@ -646,11 +731,11 @@ function carts.run(cart)
 		}
 
 		code = try(function()
-			return asm.compile(cart.code, DEBUG or false, std, ports, mmap)
-		end,
-		runtimeError,
-		function(result)
-			return result
+				return asm.compile(cart.code, DEBUG or false, std, ports, mmap)
+			end,
+			runtimeError,
+			function(result)
+				return result
 		end)
 
 		if not code then
@@ -658,13 +743,33 @@ function carts.run(cart)
 		end
 
 		api.print(string.format("successfully compiled %s", cart.pureName or "cart"))
+
+		ok, f, e = pcall(
+			load, carts.patchLua(code), name
+		)
+	elseif cart.lang == "basic" then
+		--require "TBASEXEC"
+		ok = true
+		f = function()
+			_TBASIC.EXEC(cart.code)
+		end
+	elseif cart.lang == "moonscript" then
+		parse = require "libs.moonscript.moonscript.parse"
+		compile = require "libs.moonscript.moonscript.compile"
+
+		tree, e = parse.string(cart.code)
+
+		if tree then
+			luaCode, e, pos = compile.tree(tree)
+			if luaCode then
+				ok, f, e = pcall(
+					load, luaCode, name
+				)
+			end
+		end
 	else
 		runtimeError("unrecognized language tag")
 	end
-
-	local ok, f, e = pcall(
-		load, carts.patchLua(code), name
-	)
 
 	if not ok or f == nil then
 		syntaxError(e)
@@ -682,6 +787,8 @@ function carts.run(cart)
 	setClip()
 	setCamera()
 
+	cart.sandbox.args = unpack({ ... })
+
 	local result
 	setfenv(f, cart.sandbox)
 	ok, result = pcall(f)
@@ -692,28 +799,38 @@ function carts.run(cart)
 	end
 
 	try(function()
-		if cart.sandbox._init then
-			cart.sandbox._init()
-		end
-
 		if cart.sandbox._draw or
 			cart.sandbox._update then
 			neko.cart = cart
 		end
+
+		if cart.sandbox._init then
+			cart.sandbox._init()
+		end
 	end, runtimeError)
 
 	api.flip()
+
+	return (cart.sandbox._draw or
+		cart.sandbox._update) and true or false
 end
 
 function carts.save(name)
-	if not neko.loadedCart or not name then
+	if not name and neko.loadedCart == nil then
+		log.info("name missing")
 		return false
 	end
 
-	name = resolveFile(name or neko.loadedCart.name, neko.currentDirectory)
+	name = name or neko.loadedCart.name
+	name = resolveFile(name, neko.currentDirectory)
 	log.info(string.format("saving %s", name))
 
 	carts.export()
+
+	if #neko.loadedCart.code > 65536 then
+		-- :P
+		return false, "char count is bigger then 65536"
+	end
 
 	local data = {}
 
@@ -738,12 +855,9 @@ function carts.save(name)
 		table.concat(data)
 	)
 
-	-- fixme: wrong names
 	neko.loadedCart.pureName = name
 
 	return true
 end
 
 return carts
-
--- vim: noet

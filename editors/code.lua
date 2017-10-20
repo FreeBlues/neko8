@@ -1,6 +1,5 @@
 local code = {}
 local lume = require "libs.lume"
-local colorize = require "libs.colorize"
 
 local tw = 40
 local th = 20
@@ -110,19 +109,15 @@ function code._update()
 	end
 end
 
-local function highlight(lines)
-	return colorize(
-		lines,
-		config.editors.code.colors
-	)
-end
-
-local function colorPrint(tbl)
-	for i = 1, #tbl, 2 do
+local function colorPrint(b, c)
+	for i = 1, #b do
 		local cx, cy = api.cget()
+		local c = c[i] or 6
 
-		api.color(tbl[i])
-		api.print(tbl[i + 1], true, false)
+		if c then
+			api.color(c)
+		end
+		api.print(b:sub(i, i), true, false)
 	end
 
 	api.print("")
@@ -139,7 +134,10 @@ function code.redraw()
 		)
 	)
 
-	buffer = highlight(buffer)
+	local cbuffer = code.colorizeLines(
+		buffer,
+		config.editors.code.colors
+	)
 
 	api.cursor(1 - code.view.x * 4, 9)
 
@@ -193,8 +191,8 @@ function code.redraw()
 		end
 	end
 
-	for l in api.all(buffer) do
-		colorPrint(l)
+	for i = 1, #buffer do
+		colorPrint(buffer[i], cbuffer[i])
 	end
 
 	local cx = code.cursor.x
@@ -230,11 +228,28 @@ function code.drawInfo()
 	api.print(
 		string.format(
 			"line %d/%d, char %d/%d",
-			code.cursor.y, #code.lines,
+			code.cursor.y + 1, #code.lines,
 			code.cursor.x,
 			#code.lines[code.cursor.y + 1]
 		),
 		1, config.canvas.height - 6,
+		config.editors.ui.fg
+	)
+
+	local total = 0
+
+	for i = 1, #code.lines do
+		total = total + #code.lines[i]
+	end
+
+	local s = string.format(
+		"%d/65536 chars", total
+	)
+
+	api.print(
+		s,
+		config.canvas.width - (#s + 1) * 4 - 2,
+		config.canvas.height - 6,
 		config.editors.ui.fg
 	)
 end
@@ -516,9 +531,12 @@ function code.replaceSelected(text)
 			newLine = text
 		end
 
-		for y = min.y, max.y do
+		for y = min.y, max.y - 1 do
 			table.remove(code.lines, min.y + 1)
 		end
+
+		local line = code.lines[min.y + 1]
+		code.lines[min.y + 1] = line:sub(max.x + 1, -1)
 
 		table.insert(code.lines, min.y + 1, newLine)
 
@@ -559,15 +577,15 @@ function code._copy()
 				or code.select.start
 
 			local line = code.lines[min.y + 1]
-			text = line:sub(0, min.x, #line)
+			text = line:sub(min.x + 1, #line)
 
 			local m = 1
 
-			for y = min.y + 1, max.y + m do
-				text = text .. "\n\n" .. code.lines[y]
+			for y = min.y + 2, max.y do
+				text = text .. "\n" .. code.lines[y]
 			end
 
-			text = text .. "\n\n" .. code.lines[max.y + m]:sub(0, max.x)
+			text = text .. "\n" .. code.lines[max.y + m]:sub(0, max.x)
 		end
 
 		code.forceDraw = true
@@ -590,11 +608,10 @@ function code._cut()
 end
 
 function code._text(text)
-	-- todo: rewrite
-	text = text:gsub("\t", " ")
+	text = text:gsub("\n\n", "\n \n")
 	local parts = {}
 
-	for p in text:gmatch("([^\r\n]*)\r?\n") do
+	for p in text:gmatch("[^\r\n]+") do -- fixme: this regex is not working
 		table.insert(parts, p)
 	end
 
@@ -626,9 +643,12 @@ function code._text(text)
 			code.select.active = false
 		end
 
-		code.cursor.y = code.cursor.y - 1
+		if #parts > 1 then
+			code.cursor.y = code.cursor.y - 1
+			code.cursor.x = #code.lines[code.cursor.y + 1]
+		end
+
 		code.checkCursor()
-		code.cursor.x = #code.lines[code.cursor.y + 1]
 	else
 		if code.select.active then
 			code.replaceSelected(text)
@@ -753,6 +773,319 @@ function code.export()
 	return table.concat(data)
 end
 
-return code
+function code.colorizeLines(lines, ct)
+	local colors = {}
 
--- vim: noet
+	for i = 1, #lines do
+		colors[i] = code.colorize(lines[i], ct)
+	end
+
+	return colors
+end
+
+function code.colorize(line, ct)
+	local colors = {}
+
+	if neko.loadedCart.lang == "lua" then
+		code.highlightNonChars(line, colors, ct)
+		code.highlightLuaKeywords(line, colors, ct)
+		code.highlightAPI(line, colors, ct)
+		code.highlightNumbers(line, colors, ct)
+		code.highlightSigns(line, colors, ct)
+		code.highlightLuaComments(line, colors, ct)
+		code.highlightStrings(line, colors, "\"", ct)
+		code.highlightStrings(line, colors, "\'", ct)
+	elseif neko.loadedCart.lang == "basic" then
+		code.highlightNonChars(line, colors, ct)
+		code.highlightBasicKeywords(line, colors, ct)
+		code.highlightBasicAPI(line, colors, ct)
+		code.highlightNumbers(line, colors, ct)
+		code.highlightSigns(line, colors, ct)
+		code.highlightBasicComments(line, colors, ct)
+		code.highlightStrings(line, colors, "\"", ct)
+	elseif neko.loadedCart.lang == "asm" then
+		code.highlightNonChars(line, colors, ct)
+		code.highlightAsmKeywords(line, colors, ct)
+		code.highlightAPI(line, colors, ct)
+		code.highlightNumbers(line, colors, ct)
+		code.highlightSigns(line, colors, ct)
+		code.highlightAsmComments(line, colors, ct)
+		code.highlightStrings(line, colors, "\"", ct)
+	elseif neko.loadedCart.lang == "moonscript" then
+		code.highlightNonChars(line, colors, ct)
+		code.highlightMoonKeywords(line, colors, ct)
+		code.highlightAPI(line, colors, ct)
+		code.highlightNumbers(line, colors, ct)
+		code.highlightSigns(line, colors, ct)
+		code.highlightMoonComments(line, colors, ct)
+		code.highlightStrings(line, colors, "\"", ct)
+	end
+
+	return colors
+end
+
+function code.foreach(line, f)
+	for i = 1, #line do
+		f(line:sub(i, i), i)
+	end
+end
+
+function code.highlightNonChars(line, colors, ct)
+	code.foreach(line, function(c, x, y)
+		if string.byte(c) < 32 then
+			colors[x][y] = ct.other
+		end
+	end)
+end
+
+local function isLetter(c)
+	return c and c:match("%a")
+end
+
+local function isNumber(c)
+	return c and (tonumber(c) ~= nil)
+end
+
+local function isDot(c)
+	return c and c == "."
+end
+
+local function isNil(c)
+	return not isLetter(c) and not isNumber(c) and not isDot(c)
+end
+
+function code.highlightWords(line, colors, words, color)
+	-- todo: check if no char is before, like
+	-- cdsasLS() will mark LS blue
+	-- that's wrong
+
+	for i = 1, #line do
+		local c = line:sub(i, i)
+		local start = i
+
+		if isNil(line:sub(i - 1, i - 1)) then
+			while i <= #line and (isLetter(c) or isNumber(c)) do
+				i = i + 1
+				c = line:sub(i, i)
+			end
+
+			local w = line:sub(start, i - 1)
+
+			for j = 1, #words do
+				local word = words[j]
+
+				if word == w then
+					for k = start, i - 1 do
+						colors[k] = color
+					end
+					break
+				end
+			end
+		end
+	end
+end
+
+local luaKeywords = {
+	"and", "break", "do", "else", "elseif",
+	"end", "false", "for", "function", "goto", "if",
+	"in", "local", "nil", "not", "or", "repeat",
+	"return", "then", "true", "until", "while"
+}
+
+function code.highlightLuaKeywords(line, colors, ct)
+	code.highlightWords(line, colors, luaKeywords, ct.keyword)
+end
+
+function code.highlightAPI(line, colors, ct)
+	code.highlightWords(line, colors, apiNamesOnly, ct.api)
+end
+
+function code.highlightNumbers(line, colors, ct)
+	for i = 1, #line do
+		local c = line:sub(i, i)
+		local start = i
+
+		if isNil(line:sub(i - 1, i - 1)) and isNumber(c) then
+			while i <= #line and (isNumber(c) or isDot(c)) do
+				i = i + 1
+				c = line:sub(i, i)
+			end
+
+			if not isLetter(line:sub(i, i)) then
+				for k = start, i - 1 do
+					colors[k] = ct.number
+				end
+			end
+		end
+	end
+end
+
+local signs = {
+	{ "+", 1 },
+	{ "-", 1 },
+	{ "*", 1 },
+	{ "/", 1 },
+	{ "^", 1 },
+	{ "#", 1 },
+	{ "%", 1 },
+	{ "&", 1 },
+	{ "~", 1 },
+	{ "|", 1 },
+	{ "<<", 2 },
+	{ ">>", 2 },
+	{ "//", 2 },
+	{ "==", 2 },
+	{ "+=", 2 },
+	{ "-=", 2 },
+	{ "~=", 2 },
+	{ "<=", 2 },
+	{ ">=", 2 },
+	{ "<", 1 },
+	{ ">", 1 },
+	{ "=", 1 },
+	{ "(", 1 },
+	{ ")", 1 },
+	{ "{", 1 },
+	{ "}", 1 },
+	{ "[", 1 },
+	{ "]", 1 },
+	{ "::", 2 },
+	{ ";", 1 },
+	{ ":", 1 },
+	{ ",", 1 },
+	{ ".", 1 },
+	{ "..", 2 },
+	{ "...", 3 }
+}
+
+local function esc(x)
+  return  x:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
+end
+
+function code.highlightSigns(line, colors, ct)
+	for i = 1, #signs do
+		local sign = signs[i]
+		local sg = esc(sign[1])
+		local start = 1
+
+ 		repeat
+			start = line:find(sg, start)
+
+			if start then
+				for j = start, start + sign[2] - 1 do
+					colors[j] = ct.token
+				end
+				start = start + sign[2]
+			end
+		until not start
+	end
+end
+
+function code.highlightLuaComments(line, colors, ct)
+	code.highlightCommentsBase(line, colors, "--", "\n", 0, ct.comment)
+	code.highlightCommentsBase(line, colors, "--[[", "]]", 2, ct.comment)
+	-- todo: multiline
+end
+
+local unfinishedComment = false
+
+function code.highlightCommentsBase(line, colors, start, finish, extra, clr)
+	for i = 1, #line do
+		local s = unfinishedComment and 1 or line:find(start, i, true)
+
+		if s then
+			local f = line:find(finish, s + 1, true)
+
+			if not f then
+				if finish ~= "\n" then
+					unfinishedComment = true
+				end
+				f = #line
+			else
+				unfinishedComment = false
+				f = f + extra
+			end
+
+			for j = s, f do
+				colors[j] = clr
+			end
+		end
+	end
+end
+
+function code.highlightStrings(line, colors, del, ct, s)
+	local start
+
+	if s then
+		start = string.find(line, del, s, true)
+	else
+		start = string.find(line, del, s, true)
+	end
+
+	if start then
+		local finish = string.find(line, del, start + 1, true)
+
+		if finish then
+			for i = start, finish do
+				if colors[i] ~= ct.comment then
+					colors[i] = ct.string
+				end
+			end
+
+			code.highlightStrings(line, colors, del, ct, finish + 1)
+		end
+	end
+end
+
+local basicKeywords = {
+	"LET", "DATA", "IF", "THEN", "ELSE",
+	"FOR", "TO", "NEXT", "WHILE", "WEND", "REPEAT	",
+	"UNTIL", "DO", "LOOP", "GOTO", "GOSUB", "ON",
+	"DEF", "END", "ABORT", "ABORTM", "REM"
+}
+
+function code.highlightBasicKeywords(line, colors, ct)
+	code.highlightWords(line, colors, basicKeywords, ct.keyword)
+end
+
+function code.highlightBasicComments(line, colors, ct)
+	code.highlightCommentsBase(line, colors, "REM", "\n", 0, ct.comment)
+	-- ;)
+end
+
+function code.highlightBasicAPI(line, colors, ct)
+	code.highlightWords(line, colors, apiNamesOnlyUpperCase, ct.api)
+end
+
+local asmKeywords = {
+	"if", "then", "end", "until", "repeat",
+	"while", "loop", "ret", "extern", "section", "def", "do"
+}
+
+function code.highlightAsmKeywords(line, colors, ct)
+	code.highlightWords(line, colors, asmKeywords, ct.keyword)
+end
+
+function code.highlightAsmComments(line, colors, ct)
+	code.highlightCommentsBase(line, colors, "--", "\n", 0, ct.comment)
+end
+
+local asmKeywords = {
+	"false", "true", "nil", "return",
+	"break", "continue", "for", "while",
+	"if", "else", "elseif", "unless", "switch",
+	"when", "and", "or", "in", "do",
+	"not", "super", "try", "catch",
+	"with", "export", "import", "then",
+	"from", "class", "extends", "new"
+}
+
+function code.highlightMoonKeywords(line, colors, ct)
+	code.highlightWords(line, colors, asmKeywords, ct.keyword)
+end
+
+function code.highlightMoonComments(line, colors, ct)
+	code.highlightCommentsBase(line, colors, "--", "\n", 0, ct.comment)
+end
+
+return code

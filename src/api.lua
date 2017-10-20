@@ -51,114 +51,24 @@ function initApi()
 end
 
 function createSandbox(lang)
-	return {
-		pcall = pcall,
-		loadstring = loadstring,
-		setmetatable = setmetatable,
-		require = require,
-		tostring = tostring,
-		tonumber = tonumber,
+	local sandbox = {}
 
-		-- this is required by the asm.lua callx operator
-		unpck = table.unpack,
+	if lang ~= "basic" then
+		for k, v in pairs(apiList) do
+			sandbox[k] = v[1]
+		end
+	end
 
-		camera = api.camera,
-		clip = api.clip,
-		fget = api.fget,
-		fset = api.fset,
-		mget = api.mget,
-		mset = api.mset,
-		printh = print,
-		csize = api.csize,
-		rect = api.rect,
-		rectfill = api.rectfill,
-		brect = api.brect,
-		brectfill = api.brectfill,
-		color = api.color,
-		cls = api.cls,
-		circ = api.circ,
-		circfill = api.circfill,
-		pset = api.pset,
-		pget = api.pget,
-		line = api.line,
-		print = api.print,
-		flip = api.flip,
-		cursor = api.cursor,
-		cget = api.cget,
-		scroll = api.scroll,
-		spr = api.spr,
-		sspr = api.sspr,
-		sget = api.sget,
-		sset = api.sset,
-		pal = api.pal,
-		palt = api.palt,
-		map = api.map,
-		ppget = api.ppget,
-		sfx = api.sfx,
-		music = api.music,
+	return sandbox
+end
 
-		tri = api.tri,
-		trifill = api.trifill,
-		poly = api.poly,
-		polyfill = api.polyfill,
+function api.exit()
+	neko.cart = nil
+end
 
-		memcpy = api.memcpy,
-
-		btn = api.btn,
-		btnp = api.btnp,
-		key = api.key,
-
-		flr = api.flr,
-		ceil = api.ceil,
-		cos = api.cos,
-		sin = api.sin,
-		rnd = api.rnd,
-		srand = api.srand,
-		max = api.max,
-		min = api.min,
-		mid = api.mid,
-		abs = api.abs,
-		sgn = api.sgn,
-		atan2 = api.atan2,
-		band = band,
-		bnot = bnot,
-		bor = bor,
-		bxor = bxor,
-		shl = shl,
-		shr = shr,
-		sqrt = api.sqrt,
-
-		help = commands.help,
-		folder = commands.folder,
-		ls = commands.ls,
-		run = commands.run,
-		new = commands.new,
-		mkdir = commands.mkdir,
-		load = commands.load,
-		save = commands.save,
-		reboot = commands.reboot,
-		shutdown = commands.shutdown,
-		cd = commands.cd,
-		rm = commands.rm,
-		edit = commands.edit,
-		minify = commands.minify,
-		version = commands.version,
-		pwd = commands.pwd,
-		install_demos = commands.installDemos,
-
-		pairs = pairs,
-		ipairs = ipairs,
-		string = string,
-		add = api.add,
-		del = api.del,
-		all = api.all,
-		count = api.count,
-		foreach = api.foreach,
-
-		smes = api.smes,
-		nver = api.nver,
-		mstat = api.mstat,
-	}
+function api.unload()
+	neko.cart = nil
+	neko.loadedCart = nil
 end
 
 function api.sfx(n, channel, offset)
@@ -166,6 +76,7 @@ function api.sfx(n, channel, offset)
 
 	if n == -1 and channel >= 0 then
 		audio.sfx[channel].sfx = nil
+		audio.sfx[channel].offset = -1
 		return
 	elseif n == -2 and channel >= 0 then
 		audio.sfx[channel].loop = false
@@ -219,10 +130,11 @@ function api.music(n, fadeLen, channelMask)
 		for i = 0, 3 do
 			if m[i] < 64 then
 				local sfx = neko.loadedCart.sfx[m[i]]
-
-				if slowestSpeed == nil or slowestSpeed > sfx.speed then
-					slowestSpeed = sfx.speed
-					slowestChannel = i
+				if sfx then
+					if slowestSpeed == nil or slowestSpeed > sfx.speed then
+						slowestSpeed = sfx.speed
+						slowestChannel = i
+					end
 				end
 			end
 		end
@@ -331,14 +243,29 @@ function api.fget(n, f)
 	return neko.loadedCart.sprites.flags[n]
 end
 
-
-local function flip(byte, b)
-	b = 2 ^ b
-	return bit.bxor(byte, b)
-end
-
 function api.fset(n, v, f)
-	-- fixme: implement
+	if v == nil then
+		v, f = f, nil
+	end
+
+	if f ~= nil then
+		if type(f) == "boolean" then
+			f = f == true and 1 or 0
+		end
+
+		if f == 1 then
+			neko.loadedCart.sprites.flags[n] = bit.bor(
+				neko.loadedCart.sprites.flags[n], (bit.lshift(1, v))
+			)
+		else
+			neko.loadedCart.sprites.flags[n] = bit.band(
+			neko.loadedCart.sprites.flags[n],
+				(bit.lshift(1, v)) == 1 and 0 or 1
+			)
+		end
+	else
+		neko.loadedCart.sprites.flags[n] = v
+	end
 end
 
 function api.mget(x, y)
@@ -429,7 +356,8 @@ function api.brectfill(x, y, w, h, c)
 		api.flr(x),
 		api.flr(y),
 		api.flr(w),
-		api.flr(h))
+		api.flr(h)
+	)
 end
 
 function api.color(c)
@@ -440,7 +368,7 @@ function api.color(c)
 	end
 
 	love.graphics.setColor(
-		c * 16, 0, 0, 255
+		c, 0, 0, 255
 	)
 
 	colors.current = c
@@ -451,8 +379,8 @@ function api.circ(ox, oy, r, c)
 		api.color(c)
 	end
 
-	ox = api.flr(ox)
-	oy = api.flr(oy)
+	ox = api.flr(ox) + 1
+	oy = api.flr(oy) + 1
 	r = api.flr(r)
 
 	local points = {}
@@ -510,8 +438,8 @@ function api.circfill(cx, cy, r, c)
 		api.color(c)
 	end
 
-	cx = api.flr(cx)
-	cy = api.flr(cy)
+	cx = api.flr(cx) + 1
+	cy = api.flr(cy) + 1
 	r = api.flr(r)
 
 	local x = r
@@ -542,9 +470,11 @@ function api.circfill(cx, cy, r, c)
 end
 
 function api.pget(x, y)
-	if not pgetData or x < 0 or x > config.canvas.width - 1
-		or y < 0 or y > config.canvas.height - 1 then
-		return 0
+	x = x
+	y = y
+	if not pgetData or x < 0 or x > config.canvas.width
+		or y < 0 or y > config.canvas.height then
+		return 10
 	end
 
 	x = api.flr(x)
@@ -560,7 +490,7 @@ function api.pset(x, y, c)
 
 	api.color(c)
 	love.graphics.points(
-		api.flr(x), api.flr(y),
+		api.flr(x) + 0.5, api.flr(y) + 0.5,
 		c * 16, 0, 0, 255
 	)
 end
@@ -578,12 +508,73 @@ cursor = {
 	y = 0
 }
 
-function api.print(s, x, y, c)
+function api.print(s, x, y, c, i)
+	if s == nil then return end
+
 	if c then
 		api.color(c)
 	end
 
+	if type(s) == "number" then
+		s = tostring(s)
+	end
+
+	local parts = {}
+
+	for p in string.gmatch(s, "([^\n]+)") do
+		table.insert(parts, p)
+	end
+
+	if #parts > 1 then
+		if y == nil then
+			y = cursor.y
+			scroll = true
+		end
+
+		if x == nil then
+			x = cursor.x
+		end
+
+		local n = 0
+
+		for i, p in ipairs(parts) do
+			n = n + api.print(p, x, y)
+			y = y + 6
+
+			if scroll and y >= 120 then
+				local c = c or colors.current
+				api.scroll(12)
+				y = 108
+
+				api.color(c)
+				api.cursor(0, y)
+				api.flip()
+			end
+		end
+
+		if scroll then
+			cursor.y = cursor.y + n * 6
+		end
+
+		return n
+	end
+
 	local scroll = (y == nil)
+
+	if s ~= "" and type(x) ~= "boolean" and type(y) ~= "boolean"
+		and #s * 4 + cursor.x > config.canvas.width and not i then
+		local dx = api.flr((config.canvas.width - cursor.x) / 4)
+		local s1 = s:sub(1, dx)
+		local s2 = s:sub(dx + 1, -1)
+
+		api.print(s1, x, y, c)
+
+		if type(y) == "number" then
+			y = y + 6
+		end
+
+		return api.print(s2, 0, y, c) + 1
+	end
 
 	if type(y) == "boolean" then
 		scroll = y
@@ -598,14 +589,6 @@ function api.print(s, x, y, c)
 	end
 
 	if scroll then
-		--[[ if #s * 4 + cursor.x > config.canvas.width then
-			local xy = api.ceil((config.canvas.width - cursor.x) / 4 - #s - 1)
-			log.info(s:sub(1, xy))
-			api.print(s:sub(1, xy), x, y, c)
-			api.print(s:sub(xy, -1), x, y, c)
-			return
-		end --]] -- todo: scrolling
-
 		y = cursor.y
 		cursor.y = cursor.y + 6
 	end
@@ -630,29 +613,55 @@ function api.print(s, x, y, c)
 		api.color(c)
 	end
 
-	love.graphics.setShader(
-		colors.textShader
-	)
-
 	love.graphics.print(
 		s, api.flr(x), api.flr(y) + 1
 		-- watch out that +1!
 	)
+
+	return 0
 end
 
 function api.flip()
-	if gif then
-		gif:frame(canvas.renderable:newImageData())
-	end
+	colors.displayShader:send(
+		"palette",
+		unpack(colors.display)
+	)
 
 	love.graphics.setScissor()
 	love.graphics.origin()
-	love.graphics.setCanvas(canvas.message)
-	love.graphics.clear()
+
+	-- FIXME
+	if gif then
+		love.graphics.setCanvas(canvas.gif)
+		love.graphics.setShader()
+		love.graphics.setColor(255, 255, 255, 255)
+		love.graphics.clear(0, 0, 0, 255)
+
+		love.graphics.draw(
+			canvas.renderable,
+			0, 0, 0, config.canvas.gifScale, config.canvas.gifScale
+		)
+
+		gif:frame(canvas.gif:newImageData())
+	end
+
+	love.graphics.setCanvas(canvas.support)
+
+	love.graphics.setShader(colors.supportShader)
+	love.graphics.draw(
+		canvas.renderable, 0, 0
+	)
+
+	love.graphics.setShader(colors.drawShader)
+
+	if not neko.focus then
+		-- love.graphics.clear()
+		-- api.print("click to focus", 68, 62, 7)
+	end
 
 	if neko.message then
-		api.rectfill(
-			0, 0,
+		api.brectfill(
+			0, config.canvas.height - 7,
 			config.canvas.width,
 			7,
 			config.messages.bg
@@ -660,37 +669,12 @@ function api.flip()
 
 		api.print(
 			neko.message.text,
-			1, 1,
+			1, config.canvas.height - 6,
 			config.messages.fg
 		)
 	end
 
-	colors.displayShader:send(
-		"palette",
-		shaderUnpack(colors.display)
-	)
-
-	love.graphics.setShader(colors.displayShader)
-
-	love.graphics.setCanvas()
-	love.graphics.clear()
-
-	love.graphics.draw(
-		canvas.renderable,
-		canvas.x, canvas.y, 0,
-		canvas.scaleX, canvas.scaleY
-	)
-
-	if neko.message then
-		love.graphics.draw(
-			canvas.message, canvas.x,
-			canvas.y + (config.canvas.height - 7)
-			* canvas.scaleY,
-			0, canvas.scaleX, canvas.scaleY
-		)
-	end
-
-	if editors.opened and neko.cart == nil then
+	if not mobile and editors.opened and neko.cart == nil then
 		local mx, my = api.mstat()
 		neko.cart, neko.core = neko.core, neko.cart
 
@@ -700,28 +684,37 @@ function api.flip()
 
 		for x = -1, 1 do
 			for y = x == 0 and -1 or 0, x == 0 and 1 or 0 do
-				api.onCanvasSpr(
+				api.spr(
 					neko.cursor.current,
-					(mx + x) * canvas.scaleX
-					+ canvas.x,
-					(my + y) * canvas.scaleY
-					+ canvas.y
+					mx + x,
+					my + y
 				)
 			end
 		end
 
 		api.pal()
 
-		api.onCanvasSpr(
+		api.spr(
 			neko.cursor.current,
-			mx * canvas.scaleX
-			+ canvas.x,
-			my * canvas.scaleY
-			+ canvas.y
+			mx,
+			my
 		)
 
 		neko.cart, neko.core = neko.core, neko.cart
 	end
+
+	love.graphics.setShader(
+		colors.displayShader
+	)
+
+	love.graphics.setCanvas()
+	love.graphics.clear()
+
+	love.graphics.draw(
+		canvas.support,
+		canvas.x, canvas.y, 0,
+		canvas.scaleX, canvas.scaleY
+	)
 
 	love.graphics.present()
 	love.graphics.setShader(colors.drawShader)
@@ -765,7 +758,7 @@ function api.spr(n, x, y, w, h, fx, fy)
 	n = api.flr(n)
 	love.graphics.setShader(colors.spriteShader)
 	colors.spriteShader:send(
-		"transparent", shaderUnpack(colors.transparent)
+		"transparent", unpack(colors.transparent)
 	)
 
 	w = w or 1
@@ -800,47 +793,6 @@ function api.spr(n, x, y, w, h, fx, fy)
 	love.graphics.setShader(colors.drawShader)
 end
 
-function api.onCanvasSpr(n, x, y, w, h, fx, fy)
-	if neko.cart == nil then
-		neko.cart = neko.loadedCart
-			and neko.loadedCart or neko.core
-	end
-
-	n = api.flr(n)
-	love.graphics.setShader(colors.onCanvasShader)
-
-	w = w or 1
-	h = h or 1
-
-	local q
-	if w == 1 and h == 1 then
-		q = neko.cart.sprites.quads[n]
-	else
-		local id = string.format('%d-%d-%d', n, w, h)
-		if neko.cart.sprites.quads[id] then
-			q = neko.cart.sprites.quads[id]
-		else
-			q = love.graphics.newQuad(
-				api.flr(n % 16) * 8,
-				api.flr(n / 32) * 8, 8 * w,
-				8 * h, 128, 256
-			)
-
-			neko.cart.sprites.quads[id] = q
-		end
-	end
-
-	love.graphics.draw(
-		neko.cart.sprites.sheet, q,
-		api.flr(x) + (w * 8 * (fx and 1 or 0)),
-		api.flr(y) + (h * 8 * (fy and 1 or 0)),
-		0, api.flr((fx and -1 or 1) * canvas.scaleX),
-		api.flr((fy and -1 or 1) * canvas.scaleY)
-	)
-
-	love.graphics.setShader(colors.displayShader)
-end
-
 function api.sspr(
 	sx, sy, sw, sh, dx, dy, dw, dh, fx,fy
 )
@@ -854,24 +806,38 @@ function api.sspr(
 
 	-- todo: cache this quad
 
-	local q = love.graphics.newQuad(
+	local q = (not coresprites) and love.graphics.newQuad(
 		sx, sy, sw, sh,
 		neko.cart.sprites.sheet:getDimensions()
+	) or love.graphics.newQuad(
+		sx, sy, sw, sh,
+		neko.core.sprites.sheet:getDimensions()
 	)
 
 	love.graphics.setShader(colors.spriteShader)
 	colors.spriteShader:send(
 		"transparent",
-		shaderUnpack(colors.transparent)
+		unpack(colors.transparent)
 	)
 
-	love.graphics.draw(
-		neko.cart.sprites.sheet, q,
-		api.flr(dx) + (dw * (fx and 1 or 0)),
-		api.flr(dy) + (dh * (fy and 1 or 0)),
-		0, fx and -1 or 1 * (dw / sw),
-		fy and -1 or 1 * (dh / sh)
-	)
+
+	if not coresprites then
+		love.graphics.draw(
+			neko.cart.sprites.sheet, q,
+			api.flr(dx) + (dw * (fx and 1 or 0)),
+			api.flr(dy) + (dh * (fy and 1 or 0)),
+			0, fx and -1 or 1 * (dw / sw),
+			fy and -1 or 1 * (dh / sh)
+		)
+	else
+		love.graphics.draw(
+			neko.core.sprites.sheet, q,
+			api.flr(dx) + (dw * (fx and 1 or 0)),
+			api.flr(dy) + (dh * (fy and 1 or 0)),
+			0, fx and -1 or 1 * (dw / sw),
+			fy and -1 or 1 * (dh / sh)
+		)
+	end
 
 	love.graphics.setShader(colors.drawShader)
 end
@@ -906,29 +872,15 @@ function api.pal(c0,c1,p)
 		end
 
 		colors.drawShader:send(
-			"palette", shaderUnpack(colors.draw)
+			"palette", unpack(colors.draw)
 		)
 
 		colors.spriteShader:send(
-			"palette", shaderUnpack(colors.draw)
-		)
-
-			colors.onCanvasShader:send(
-				"disp",
-				shaderUnpack(colors.display)
-			)
-
-			colors.onCanvasShader:send(
-				"palette",
-				shaderUnpack(colors.draw)
-			)
-
-		colors.textShader:send(
-			"palette", shaderUnpack(colors.draw)
+			"palette", unpack(colors.draw)
 		)
 
 		colors.displayShader:send(
-			"palette", shaderUnpack(colors.display)
+			"palette", unpack(colors.display)
 		)
 
 		paletteModified = false
@@ -943,7 +895,7 @@ function api.pal(c0,c1,p)
 		colors.display[c0] = colors.palette[c1]
 
 		colors.displayShader:send(
-			"palette", shaderUnpack(colors.display)
+			"palette", unpack(colors.display)
 		)
 
 		paletteModified = true
@@ -955,25 +907,11 @@ function api.pal(c0,c1,p)
 		colors.draw[c0] = c1
 
 		colors.drawShader:send(
-			"palette", shaderUnpack(colors.draw)
+			"palette", unpack(colors.draw)
 		)
 
 		colors.spriteShader:send(
-			"palette", shaderUnpack(colors.draw)
-		)
-
-			colors.onCanvasShader:send(
-				"disp",
-				shaderUnpack(colors.display)
-			)
-
-			colors.onCanvasShader:send(
-				"palette",
-				shaderUnpack(colors.draw)
-			)
-
-		colors.textShader:send(
-			"palette", shaderUnpack(colors.draw)
+			"palette", unpack(colors.sprites)
 		)
 
 		paletteModified = true
@@ -996,7 +934,7 @@ function api.palt(c, t)
 
 	colors.spriteShader:send(
 		"transparent",
-		shaderUnpack(colors.transparent)
+		unpack(colors.transparent)
 	)
 end
 
@@ -1053,25 +991,90 @@ end
 
 function api.btn(b, p)
 	p = p or 0
+	b = b + 2
 
-	if api.keyMap[p][b] then
-		return api.keyPressed[p][b] ~= nil
+	if b < 1 or b > 7 or p < 0 or p > 1 then return false end
+
+	if p == 1 then
+		if api.keyMap[p][b] then
+			return api.keyPressed[p][b] ~= nil
+		end
+		return false
+	else
+		if g then
+			return g.b[b].ispressed
+		else
+			return false
+		end
 	end
-
-	return false
 end
 
 function api.btnp(b, p)
 	p = p or 0
+	b = b + 2
 
-	if api.keyMap[p][b] then
-		local v = api.keyPressed[p][b]
-		if v and (v == 0 or (v >= 12 and v % 4 == 0)) then
-			return true
+	if b < 1 or b > 7 or p < 0 or p > 1 then return false end
+
+	if p == 1 then
+		if api.keyMap[p][b] then
+			local v = api.keyPressed[p][b]
+			if v and (v == 0 or (v >= 12 and v % 4 == 0)) then
+				return true
+			end
+		end
+		return false
+	else
+		if g then
+			return g.b[b].isnewpress
+		else
+			return false
 		end
 	end
+end
 
-	return false
+function api.gdisable()
+	exg = g
+	g = null
+end
+
+function api.genable()
+	g = g or exg
+end
+
+function api.btnkpressed(b)
+	b = b + 2
+
+	if b < 1 or b > 7 then return end
+
+	if g then
+		return g.b[b]:keeppressed()
+	else
+		return
+	end
+end
+
+function api.btnkreleased(b)
+	b = b + 2
+
+	if b < 1 or b > 7 then return end
+
+	if g then
+		return g.b[b]:keepreleased()
+	else
+		return
+	end
+end
+
+function api.btnrelease(b)
+	b = b + 2
+
+	if b < 1 or b > 7 then return end
+
+	if g then
+		return g.b[b]:release()
+	else
+		return
+	end
 end
 
 function api.key(k)
@@ -1221,6 +1224,131 @@ function api.all(a)
 	end
 end
 
-return api
+apiList = {
+	[ "pcall" ] = { pcall, 1 },
+	[ "string" ] = { string, 0 },
+	[ "math" ] = { math, 0 },
+	[ "setmetatable" ] = { setmetatable, 2 },
+	[ "getmetatable" ] = { getmetatable, 1 },
+	[ "table" ] = { table, 0 },
+	[ "type" ] = { type, 1 },
+	[ "require" ] = { require, 1 },
+	[ "tostring" ] = { tostring, 1 },
+	[ "tonumber" ] = { tonumber, 1 },
+	[ "assert" ] = { assert, 1 },
+	[ "unpck" ] = { table.unpack, 1 },
+	[ "next" ] = { next, 1 },
+	[ "nextvar" ] = { nextvar, 1 },
+	[ "error" ] = { runtimeError, 1 },
 
--- vim: noet
+	[ "camera" ] = { api.camera, 2 },
+	[ "clip" ] = { api.clip, 4 },
+	[ "fget" ] = { api.fget, 2 },
+	[ "fset" ] = { api.fset, 3 },
+	[ "mget" ] = { api.mget, 2 },
+	[ "mset" ] = { api.mset, 3 },
+	[ "printh" ] = { print, vararg },
+	[ "csize" ] = { api.csize, 0 },
+	[ "rect" ] = { api.rect, 5 },
+	[ "rectfill" ] = { api.rectfill, 5 },
+	[ "brect" ] = { api.brect, 5 },
+	[ "brectfill" ] = { api.brectfill, 5 },
+	[ "color" ] = { api.color, 1 },
+	[ "cls" ] = { api.cls, 1 },
+	[ "circ" ] = { api.circ, 4 },
+	[ "circfill" ] = { api.circfill, 4 },
+	[ "pset" ] = { api.pset, 3 },
+	[ "pget" ] = { api.pget, 2 },
+	[ "line" ] = { api.line, 5 },
+	[ "print" ] = { api.print, vararg },
+	[ "flip" ] = { api.flip, 0 },
+	[ "cursor" ] = { api.cursor, 2 },
+	[ "cget" ] = { api.cget, 0 },
+	[ "scroll" ] = { api.scroll, 1 },
+	[ "spr" ] = { api.spr, vararg },
+	[ "sspr" ] = { api.sspr, vararg },
+	[ "sget" ] = { api.sget, 2 },
+	[ "sset" ] = { api.sset, 3 },
+	[ "pal" ] = { api.pal, 2 },
+	[ "palt" ] = { api.palt, 2 },
+	[ "map" ] = { api.map, vararg },
+	[ "ppget" ] = { api.ppget, 0 },
+	[ "sfx" ] = { api.sfx, 1 },
+	[ "music" ] = { api.music, 1 },
+
+	[ "tri" ] = { api.tri, 6 },
+	[ "trifill" ] = { api.trifill, 6 },
+	[ "poly" ] = { api.poly, vararg },
+	[ "polyfill" ] = { api.polyfill, vararg },
+
+	[ "btn" ] = { api.btn, 1 },
+	[ "btnp" ] = { api.btnp, 1 },
+	[ "btnkpressed" ] = { api.btnkpressed, 1 },
+	[ "btnkreleased" ] = { api.btnkreleased, 1 },
+	[ "btnrelease" ] = { api.btnrelease, 1 },
+	[ "genable" ] = { api.genable, 0 },
+	[ "gdisable" ] = { api.gdisable, 0 },
+	[ "key" ] = { api.key, 1 },
+
+	[ "flr" ] = { api.flr, 1 },
+	[ "ceil" ] = { api.ceil, 1 },
+	[ "cos" ] = { api.cos, 1 },
+	[ "sin" ] = { api.sin, 1 },
+	[ "rnd" ] = { api.rnd, 1 },
+	[ "srand" ] = { api.srand, 1 },
+	[ "max" ] = { api.max, 2 },
+	[ "min" ] = { api.min, 2 },
+	[ "mid" ] = { api.mid, 3 },
+	[ "abs" ] = { api.abs, 1 },
+	[ "sgn" ] = { api.sgn, 1 },
+	[ "atan2" ] = { api.atan2, 1 },
+	[ "band" ] = { band, 2 },
+	[ "bnot" ] = { bnot, 2 },
+	[ "bor" ] = { bor, 2 },
+	[ "bxor" ] = { bxor, 2 },
+	[ "shl" ] = { shl, 2 },
+	[ "shr" ] = { shr, 2 },
+	[ "sqrt" ] = { api.sqrt, 1 },
+
+	[ "load" ] = { carts.load, 0 },
+	[ "run" ] = { carts.run, 0 },
+	[ "new" ] = { commands.new, 0 },
+	[ "mkdir" ] = { commands.mkdir, 0 },
+	[ "save" ] = { commands.save, 0 },
+	[ "reboot" ] = { commands.reboot, 0 },
+	[ "shutdown" ] = { commands.shutdown, 0 },
+	[ "folder" ] = { commands.folder, 0 },
+	[ "cd" ] = { commands.cd, 0 },
+	[ "rm" ] = { commands.rm, 0 },
+	[ "edit" ] = { commands.edit, 0 },
+	[ "minify" ] = { commands.minify, 0 },
+	[ "pwd" ] = { commands.pwd, 0 },
+	[ "ls" ] = { commands.ls, 0 },
+	[ "install_demos" ] = { commands.installDemos, 0 },
+	[ "exit" ] = { api.exit, 0 },
+	[ "unload" ] = { api.unload, 0 },
+
+	[ "pairs" ] = { pairs, 1 },
+	[ "ipairs" ] = { ipairs, 1 },
+	[ "add" ] = { api.add, 2 },
+	[ "del" ] = { api.del, 2 },
+	[ "all" ] = { api.all, 1 },
+	[ "count" ] = { api.count, 1 },
+	[ "foreach" ] = { api.foreach, 2 },
+
+	[ "smes" ] = { api.smes, 2 },
+	[ "nver" ] = { api.nver, 0 },
+	[ "mstat" ] = { api.mstat, 0 }
+}
+
+_TBASIC.INIT()
+
+apiNamesOnly = {}
+apiNamesOnlyUpperCase = {}
+
+for k, v in pairs(apiList) do
+	table.insert(apiNamesOnly, k)
+	table.insert(apiNamesOnlyUpperCase, string.upper(k))
+end
+
+return api

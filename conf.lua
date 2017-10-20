@@ -1,3 +1,7 @@
+_G.vararg = -13 -- magic: BASIC
+local success, lpeg = pcall(require, "lpeg")
+lpeg = success and lpeg or require "libs.lulpeg":register(not _ENV and _G)
+
 local neko8 = {
 	code = {
 		bg = 2,
@@ -10,9 +14,11 @@ local neko8 = {
 			keyword = 8,
 			number = 12,
 			comment = 13,
-			str = 12,
-			selection = 7
-			-- todo: tokens
+			string = 12,
+			selection = 7,
+			api = 9,
+			other = 5,
+			token = 7
 		}
 	},
 
@@ -53,8 +59,8 @@ local neko8 = {
 
 local version = {
 	major = 0,
-	minor = 0.4,
-	name = "web",
+	minor = 0.6,
+	name = "basic",
 	release = "dev"
 }
 
@@ -76,11 +82,12 @@ config = {
 
 	canvas = {
 		width = 192,
-		height = 128
+		height = 128,
+		gifScale = 3
 	},
 
 	font = {
-		file = "font.ttf",
+		file = "assets/font.ttf",
 		letters = "abcdefghijklmnopqrstuvwxyz" ..
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" ..
 			"1234567890!?[](){}.,;:<>+=%#^*~/\\|$" ..
@@ -95,7 +102,7 @@ config = {
 	fps = 60,
 
 	palette = {
-		{ 0, 0, 0, 255 },
+		[0] = { 0, 0, 0, 255 },
 		{ 29, 43, 83, 255 },
 		{ 126, 37, 83, 255 },
 		{ 0, 135, 81, 255 },
@@ -118,7 +125,9 @@ config = {
 	audio = {
 		bufferSize = 2048,
 		sampleRate = 22050
-	}
+	},
+
+	gamepadstyle = 1
 }
 
 function love.conf(t)
@@ -134,5 +143,3 @@ function love.conf(t)
 
 	return t
 end
-
--- vim: noet

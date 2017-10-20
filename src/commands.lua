@@ -4,7 +4,12 @@
 -----------------------------------------
 
 function resolveFile(a, dir)
-	dir = dir .. a
+	if a:sub(1, 1) == "/" then
+		dir = a
+	else
+		dir = dir .. a
+	end
+
 	dir = dir:gsub("\\","/")
 
 	if #dir:sub(-1, -1) == "/" then
@@ -48,6 +53,13 @@ function resolveFile(a, dir)
 	end
 
 	return dir
+end
+
+function isVisible(f, dir)
+	local d1 = love.filesystem.getRealDirectory(string.format("%s/%s", dir, f)) .. dir:sub(2,-1) .. f
+	local d2 = love.filesystem.getSaveDirectory() .. dir:sub(2,-1) .. f
+
+	return d1 == d2
 end
 
 function resolve(a, dir)
@@ -107,14 +119,6 @@ end
 
 local commands = {}
 
-function commands.version(a)
-	api.print(
-		"neko8 " .. config.version.string
-	)
-
-	return
-end
-
 function commands.minify(a)
 	if neko.loadedCart == nil then
 		api.color(8)
@@ -142,39 +146,6 @@ function commands.minify(a)
 		api.color(8)
 		api.print("something went wrong. please, contact @egordorichev")
 	end)
-end
-
-function commands.help(a)
-	if #a == 0 then
-		--commands.version() -- FIXME: It doesn't appear because
-		--							it goes up the screen
-		api.color(6)
-		api.print("made by @egordorichev with love")
-		api.color(7)
-		api.print("https://github.com/egordorichev/neko8")
-		api.print("")
-		api.print("Command       Description")
-		api.print("-------       -----------")
-		api.print("install_demos intall default demos")
-		api.print("ls            list files")
-		api.print("new           new cart")
-		api.print("cd            change dir")
-		api.print("mkdir         create dir")
-		api.print("rm            delete file")
-		api.print("load          load cart")
-		api.print("run           run cart")
-		api.print("reboot        reboots neko8")
-		api.print("shutdown      shutdowns neko8")
-		api.print("save          save cart")
-		api.print("edit          opens editor")
-		api.print("cls           clear screen")
-		api.print("folder        open working folder on host os")
-		api.print("pwd           display working directory")
-		api.print("version       prints neko8 version")
-	else
-		-- TODO
-		api.print(string.format("subject %s is not found", a[1]))
-	end
 end
 
 function commands.installDemos()
@@ -206,13 +177,6 @@ end
 
 function commands.pwd()
 	api.print(neko.currentDirectory, nil, nil, 12)
-end
-
-function isVisible(f, dir)
-	local d1 = love.filesystem.getRealDirectory(string.format("%s/%s", dir, f)) .. dir:sub(2,-1) .. f
-	local d2 = love.filesystem.getSaveDirectory() .. dir:sub(2,-1) .. f
-
-	return d1 == d2
 end
 
 function commands.ls(a)
@@ -275,17 +239,15 @@ function commands.ls(a)
 	end
 end
 
-function commands.run()
-	if neko.loadedCart ~= nil then
-		carts.run(neko.loadedCart)
-	else
-		api.color(14)
-		api.print("no carts loaded")
-	end
-end
-
 function commands.new(a)
 	local lang = a[1] or "lua"
+
+	if lang ~= "asm" and lang ~= "lua" and lang ~= "basic" and lang ~= "moonscript" then
+		api.color(8)
+		api.print("unknown lang")
+		return
+	end
+
 	neko.loadedCart = carts.create(lang)
 	carts.import(neko.loadedCart)
 	api.color(7)
@@ -344,12 +306,14 @@ function commands.save(a)
 		return
 	end
 
-	if not carts.save(name) then
+	local ok, m = carts.save(name)
+
+	if not ok then
 		api.smes(
-			"** failed to save cart **"
+			m or "** failed to save cart **"
 		)
 	else
-		api.smes(string.format("saved %s", neko.loadedCart.pureName))
+		api.smes(string.format("saved %s", resolveFile(neko.loadedCart.pureName, neko.currentDirectory)))
 	end
 end
 
@@ -392,8 +356,12 @@ function commands.rm(a)
 	if not love.filesystem.exists(file)
 		or not isVisible(a[1], neko.currentDirectory) then
 		api.print(
-			"no such file", nil, nil, 14
+			"no such file", nil, nil, 8
 		)
+		return
+	elseif file == "/neko.n8" then
+		api.color(8)
+		api.print("don't you try to delete neko.n8, you hacker!")
 		return
 	end
 
@@ -406,4 +374,4 @@ end
 
 return commands
 
--- vim: noet
+

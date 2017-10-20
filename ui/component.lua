@@ -30,11 +30,17 @@ function UiComponent:update(handled)
 		if not handled and mb == true then
 			if not mr and self.state ~= "clicked" then
 				self.state = "clicked"
-				self:click(love.mouse.isDown(2), mx, my)
+				self:click(love.mouse.isDown(2), mx - self.x, my - self.y)
 				return true
 			end
-		elseif self.state ~= "hovered" then
-			self.state = "hovered"
+
+			neko.cursor.current = neko.cursor.pointer_down
+		else
+			if self.state ~= "hovered" then
+				self.state = "hovered"
+			end
+
+			neko.cursor.current = neko.cursor.pointer
 		end
 	elseif self.state ~= "normal" then
 		self.state = "normal"
@@ -59,6 +65,11 @@ end
 
 function UiComponent:setZIndex(z)
 	self.z = z
+	return self
+end
+
+function UiComponent:bind(name, f)
+	self[name] = f
 	return self
 end
 

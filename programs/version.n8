@@ -1,0 +1,4 @@
+neko8 cart
+__lua__
+print("neko8 " .. nver())
+__end__

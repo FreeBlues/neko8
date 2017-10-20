@@ -1,7 +1,6 @@
 -----------------------------------------
 -- main callbacks
 -----------------------------------------
-
 local requirePath = love.filesystem.getRequirePath()
 love.filesystem.setRequirePath(requirePath ..
 	';src/?.lua;src/?/init.lua' ..
@@ -16,7 +15,7 @@ require "log"
 require "error"
 
 -- DEBUG!
--- mobile = true
+--mobile = true
 
 if mobile then
 	keyboard = require "keyboard"
@@ -31,10 +30,10 @@ hostTime = 0
 asm = require "asm-lua"
 
 audio = require "audio"
-api = require "api"
-neko = require "neko8"
 carts = require "carts"
 commands = require "commands"
+api = require "api"
+neko = require "neko8"
 
 function love.load(arg)
 	love.filesystem.unmount(love.filesystem.getSource())
@@ -44,9 +43,12 @@ function love.load(arg)
 
 		if DEBUG then
 			lurker = require "lurker"
+			lurker.protected = false
+			lurker.quiet = true
 
 			lurker.postswap = function(f)
-				editors.current.forceDraw = true
+				editors.current.init()
+				carts.import(neko.loadedCart)
 				resizeCanvas(
 					love.graphics.getWidth(),
 					love.graphics.getHeight()
@@ -55,17 +57,35 @@ function love.load(arg)
 		end
 	end
 
-	log.info(string.format("neko 8 ", config.version.string))
+	local joysticks = love.joystick.getJoysticks()
 
-	love.window.setTitle(string.format("neko 8 ", config.version.string))
+	if joysticks[0] then
+		neko.joystick = joysticks[0]
+	end
 
+	log.info("neko 8 " .. config.version.string)
+
+	love.window.setTitle("neko 8 " .. config.version.string)
 	love.window.setDisplaySleepEnabled(false)
 	neko.init()
 end
 
+function love.joystickadded(joystick)
+	if not neko.joystick then
+		neko.joystick = joystick
+	end
+end
+
+function love.joystickremoved(joystick)
+	if neko.joystick == joystick then
+		neko.joystick = nil
+	end
+end
+
 function love.touchpressed()
-	-- open virtual keyboard when in code/sfx editor on mobile
-	if editors.current == editors.modes[1] or editors.modes[4] then
+	-- open virtual keyboard when in code/sfx editor or command line on mobile
+	if ((editors.current == editors.modes[1] or editors.modes[4])
+		or editors.opened == false) and not neko.cart then
 		love.keyboard.setTextInput(true)
 	end
 end
@@ -77,18 +97,10 @@ ss={up=true,x=0,c=0,isRunning=false}
 
 function love.update(dt)
 	if not neko.focus then -- screensaver
-		--[[ss.isRunning=true
-		ss.c = ss.c > 15 and 0 or (ss.x % 2 == 0 and ss.c + 1 or ss.c)
-		ss.x = ss.up and (ss.x < 110 and ss.x + 1 or
-			(function(x) ss.up = false return x - 1 end)(ss.x)) or
-			(ss.x > 0 and ss.x - 1 or
-			(function(x) ss.up = true return x + 1 end)(ss.x))
-		api.print("Hey!, neko8 is there!", ss.x, nil, ss.c)
-		--]]
 		return
 	end
 
-	if ss.isRunning then api.cls() ss.isRunning=false end -- Added cls() on return to focus
+	neko.cursor.current = neko.cursor.default
 
 	if DEBUG then
 		lurker.update()
@@ -108,9 +120,10 @@ function love.update(dt)
 end
 
 function love.draw()
-	if not neko.focus then
-		return
-	end
+	--if not neko.focus then
+	--	api.flip()
+	--	return
+	--end
 
 	love.graphics.setCanvas(
 		canvas.renderable
@@ -137,6 +150,30 @@ end
 
 function love.resize(w, h)
 	resizeCanvas(w,h)
+end
+
+function love.joystickpressed(joystick, button)
+	if button == 4 then
+		love.keypressed("up", -1, false)
+	elseif button == 2 then
+		love.keypressed("down", -1, false)
+	elseif button == 3 then
+		love.keypressed("right", -1, false)
+	elseif button == 1 then
+		love.keypressed("left", -1, false)
+	end
+end
+
+function love.joystickreleased(joystick, button)
+	if button == 4 then
+		love.keyreleased("up")
+	elseif button == 2 then
+		love.keyreleased("down")
+	elseif button == 3 then
+		love.keyreleased("right")
+	elseif button == 1 then
+		love.keyreleased("left")
+	end
 end
 
 function love.keypressed(
@@ -218,26 +255,22 @@ function love.keypressed(
 			else
 				handled = false
 			end
-		elseif key == "f7" then
+		end
+
+		if key == "f7" then
 			local s = love.graphics.newScreenshot(false)
 			local file = string.format("neko8-%s.png", os.time())
 
 			s:encode("png", file)
 			api.smes("saved screenshot")
 		elseif key == "f8" then
-			gif = giflib.new("neko8.gif")
+			gif = giflib.new(string.format("neko8-%s.gif", os.time()), config.palette)
 			api.smes("started recording gif")
-			api.smes("gif recording is not supported")
 		elseif key == "f9" then
 			if not gif then return end
 			gif:close()
 			gif = nil
 			api.smes("saved gif")
-			love.filesystem.write(
-				string.format("neko8-%s.gif", os.time()),
-				love.filesystem.read("neko8.gif")
-			)
-			love.filesystem.remove("neko8.gif")
 		else
 			handled = false
 		end
@@ -285,14 +318,18 @@ function runtimeError(error)
 
 	neko.cart = nil
 
-	local pos = error:find("\"]:")
-	if pos then
-		error = string.format("line %s", error:sub(pos + 3))
+	if error then
+		local pos = string.find(error, "\"]:")
+		if pos then
+			error = string.format("line %s", error:sub(pos + 3))
+		end
+
+		neko.core.sandbox.redraw_prompt(true)
+		api.print("")
+		api.color(8)
+		api.print(error)
 	end
-	neko.core.sandbox.redraw_prompt(true)
-	api.print("")
-	api.color(8)
-	api.print(error)
+	api.print(debug.traceback("", 4):gsub("^%s*", ""), nil, nil, nil, true)
 	neko.core.sandbox.redraw_prompt()
 end
 
@@ -301,23 +338,25 @@ function syntaxError(error)
 	api.clip()
 
 	log.error("syntax error:")
-	log.error(e)
+	log.error(error)
 	editors.close()
 
 	neko.cart = nil
-	local pos = error:find("\"]:")
-	if pos then
-		error = string.format("line %s", error:sub(pos + 3))
+	if error then
+		local pos = string.find(error, "\"]:")
+		if pos then
+			error = string.format("line %s", error:sub(pos + 3))
+		end
+		neko.core.sandbox.redraw_prompt(true)
+		api.print("")
+		api.color(8)
+		api.print(error)
+		neko.core.sandbox.redraw_prompt()
 	end
-	neko.core.sandbox.redraw_prompt(true)
-	api.print("")
-	api.color(8)
-	api.print(error)
-	neko.core.sandbox.redraw_prompt()
 end
 
 function replaceChar(pos, str, r)
-	return str:sub(1, pos - 1) .. r .. str:sub(pos + 1)
+	return string.sub(str, 1, pos - 1) .. r .. string.sub(str, pos + 1)
 end
 
 local function toUTF8(st)
@@ -343,31 +382,36 @@ end
 
 function validateText(text)
 	for i = 1, #text do
-		local c = text:sub(i, i)
-		local valid = false
-		for j = 1, #config.font.letters do
-			local ch = config.font.letters:sub(j, j)
-			if c == ch then
-				valid = true
-				break
+		local c = string.sub(text, i, i)
+		local valid = c == " " or c == "\n" or c == "\r" or c == "\t"
+
+		if not valid then
+			for j = 1, #config.font.letters do
+				local ch = string.sub(config.font.letters, j, j)
+				if c == ch then
+					valid = true
+					break
+				end
 			end
 		end
 		if not valid then
-			text = replaceChar(i, text, "")
+			text = ""
 		end
 	end
 
-	if #text == 1 and api.key("ralt")
+	--[[if #text == 1 and api.key("ralt")
 		or api.key("lalt") then
-		local c = string.byte(text:sub(1, 1))
+		local c = string.byte(string.sub(text, 1, 1))
 
-		if c >= 97
+		if c and c >= 97
 			and c <= 122 then
 			text = replaceChar(
 				1, text, toUTF8(c + 95)
 			)
 		end
-	end
+	end--]]
+
+	-- todo
 
 	return text
 end
@@ -498,13 +542,23 @@ function initCanvas()
 		"nearest", "nearest"
 	)
 
-	canvas.message =
+	canvas.support =
 		love.graphics.newCanvas(
 			config.canvas.width,
-			7
+			config.canvas.height
 		)
 
-	canvas.message:setFilter(
+	canvas.support:setFilter(
+		"nearest", "nearest"
+	)
+
+	canvas.gif =
+		love.graphics.newCanvas(
+			config.canvas.width * config.canvas.gifScale,
+			config.canvas.height * config.canvas.gifScale
+		)
+
+	canvas.gif:setFilter(
 		"nearest", "nearest"
 	)
 
@@ -541,7 +595,7 @@ end
 -----------------------------------------
 
 function initFont()
-	love.graphics.setDefaultFilter("nearest")
+	love.graphics.setDefaultFilter("nearest", "nearest")
 	font = love.graphics.newFont(
 		config.font.file, 4
 	)
@@ -558,138 +612,53 @@ end
 colors = {}
 colors.current = 7
 
-function shaderUnpack(t)
-	return unpack(t, 1, 17)
-	-- change to 16 once love2d
-	-- shader bug is fixed
-end
-
 function initPalette()
-	colors.palette = {
-		{0, 0, 0, 255},
-		{29, 43, 83, 255},
-		{126, 37, 83, 255},
-		{0, 135, 81, 255},
-		{171, 82, 54, 255},
-		{95, 87, 79, 255},
-		{194, 195, 199, 255},
-		{255, 241, 232, 255},
-		{255, 0, 77, 255},
-		{255, 163, 0, 255},
-		{255, 240, 36, 255},
-		{0, 231, 86, 255},
-		{41, 173, 255, 255},
-		{131, 118, 156, 255},
-		{255, 119, 168, 255},
-		{255, 204, 170, 255}
-	}
-
+	colors.palette = config.palette
 	colors.display = {}
 	colors.draw = {}
+	colors.sprites = {}
 	colors.transparent = {}
 
-	for i = 1, 16 do
-		colors.draw[i] = i
-		colors.transparent[i] = i == 1 and 0 or 1
-		colors.display[i] = colors.palette[i]
-	end
+	for i = 0, 15 do
+    colors.transparent[i] = (i == 0 and 0 or 1) --Black is transparent by default.
+    colors.draw[i] = i - 1
+		colors.sprites[i] = i - 1
+    colors.display[i] = config.palette[i]
+  end
+
+  colors.display[16] = { 0, 0, 0, 0 } --A bug in unpack ???
+  colors.draw[16] = 0
+  colors.sprites[16] = 0
+  colors.transparent[16] = 0
 
 	colors.drawShader =
-		love.graphics.newShader([[
-extern float palette[16];
-vec4 effect(vec4 color, Image texture,
-			vec2 texture_coords,
-			vec2 screen_coords) {
-	int index = int(color.r*16.0);
-	return vec4(vec3(palette[index]/16.0),1.0);
-}]])
+		love.graphics.newShader("assets/draw.frag")
 
 	colors.drawShader:send(
 		"palette",
-		shaderUnpack(colors.draw)
+		unpack(colors.draw)
 	)
 
 	colors.spriteShader =
-		love.graphics.newShader([[
-extern float palette[16];
-extern float transparent[16];
-vec4 effect(vec4 color, Image texture,
-			vec2 texture_coords, vec2 screen_coords) {
-	int index = int(floor(Texel(texture, texture_coords).r*16.0));
-	float alpha = transparent[index];
-	return vec4(vec3(palette[index]/16.0),alpha);
-}]])
+		love.graphics.newShader("assets/sprite.frag")
 
 	colors.spriteShader:send(
 		"palette",
-		shaderUnpack(colors.draw)
+		unpack(colors.sprites)
 	)
 
 	colors.spriteShader:send(
 		"transparent",
-		shaderUnpack(colors.transparent)
-	)
-
-	colors.textShader =
-		love.graphics.newShader([[
-extern float palette[16];
-vec4 effect(vec4 color, Image texture,
-			vec2 texture_coords, vec2 screen_coords) {
-	vec4 texcolor = Texel(texture, texture_coords);
-	if(texcolor.a == 0.0) {
-		return vec4(0.0,0.0,0.0,0.0);
-	}
-	int index = int(color.r*16.0);
-	return vec4(vec3(palette[index]/16.0),1.0);
-}]])
-
-	colors.textShader:send(
-		"palette",
-		shaderUnpack(colors.draw)
+		unpack(colors.transparent)
 	)
 
 	colors.displayShader =
-		love.graphics.newShader([[
-extern vec4 palette[16];
-vec4 effect(vec4 color, Image texture,
-			vec2 texture_coords, vec2 screen_coords) {
-	int index = int(Texel(texture, texture_coords).r*15.0);
-	return palette[index]/256.0;
-}]])
+		love.graphics.newShader("assets/display.frag")
 
 	colors.displayShader:send(
 		"palette",
-		shaderUnpack(colors.display)
+		unpack(colors.display)
 	)
 
-	colors.onCanvasShader =
-		love.graphics.newShader([[
-extern float palette[16];
-extern vec4 disp[16];
-extern float transparent[16];
-vec4 effect(vec4 color, Image texture,
-			vec2 texture_coords, vec2 screen_coords) {
-	int index = int(floor(Texel(texture, texture_coords).r*16.0));
-	float alpha = transparent[index];
-	// return vec4(vec3(palette[index]/16.0),alpha);
-	vec3 clr = vec3(disp[ int( palette[int(floor(Texel(texture, texture_coords).r))] ) ]/16.0);
-	return vec4(clr/16.0,alpha);
-}]])
-
-	colors.onCanvasShader:send(
-		"disp",
-		shaderUnpack(colors.display)
-	)
-
-	colors.onCanvasShader:send(
-		"palette",
-		shaderUnpack(colors.draw)
-	)
-
-	colors.onCanvasShader:send(
-		"transparent",
-		shaderUnpack(colors.transparent)
-	)
+	colors.supportShader = love.graphics.newShader("assets/support.frag")
 end
-
--- vim: noet
